@@ -21,6 +21,7 @@ public:
 	class PIDRotate : public PIDOutput {
 		public:
 			PIDRotate(MecanumDrive& drive, ADXRS450_Gyro& gyro) {
+				// Initialize the driving and gyro controlling classes
 				m_drive = &drive;
 				m_gyro = &gyro;
 			}
@@ -43,45 +44,55 @@ public:
 				m_rotate = rotate;
 			}
 
+			/**
+			 * Collects data from the PID loop.
+			 */
 			void PIDWrite(double output) override {
-				double curve = (-m_gyro->GetAngle())/RATE;
-				double rotate = curve*output;
-				DriverStation::ReportWarning("Whitman Curve: " + std::to_string(curve) + "\nRot:" + std::to_string(rotate) +
-						"\nAngle:" + std::to_string(m_gyro->GetAngle()) + "\nOutput:" + std::to_string(output));
-				m_drive->DriveCartesian(m_x, m_y, rotate + m_rotate);
+				double turningValue = (kAngleSetpoint - m_gyro->GetAngle()) * kP; // The turning value how fast the robot should be rotated
+				turningValue = std::copysign(turningValue, output); // Turns in the direction of the PID output
+				m_drive->DriveCartesian(m_x, m_y, turningValue + m_rotate); // Final drive code using frc's Mecanum Drive class.
 			}
 		private:
+			const double kAngleSetpoint = 0.0;
+			const double kP = 0.01;
 			MecanumDrive *m_drive;
 			ADXRS450_Gyro *m_gyro;
 			double m_x = 0.0;
 			double m_y = 0.0;
 			double m_rotate = 0.0;
-			const double RATE = 100;
 		};
 
 	void RobotInit() override {
+		/////////// QUESTIONABLE USEFULNESS //////////////
 		m_chooser.AddDefault("Default Auto", &m_defaultAuto);
 		m_chooser.AddObject("My Auto", &m_myAuto);
-		Talon *rightFrontWheel = new Talon(2);
-		Talon *leftFrontWheel = new Talon(1);
-		Talon *rightBackWheel = new Talon(4);
-		Talon *leftBackWheel = new Talon(3);
-		m_xbox = new Joystick(0); // Define joystick being used at USB port #0 on the Drivers Station
+		//////////////////////////////////////////////////
+		Talon *rightFrontWheel = new Talon(2); // Initialize the right-front wheel's speed controller on PWM channel 2
+		Talon *leftFrontWheel = new Talon(1); // Initialize the left-front wheel's speed controller on PWM channel 1
+		Talon *rightBackWheel = new Talon(4); // Initialize the right-backt wheel's speed controller on PWM channel 4
+		Talon *leftBackWheel = new Talon(3); // Initialize the left-back wheel's speed controller on PWM channel 3
+		m_logitech = new Joystick(0); // Define Logitech joystick being used at USB port #0 on the Drivers Station
+		// Initialize Mecanum Drive with all the wheels
 		m_mecanumDrive = new MecanumDrive(*leftFrontWheel, *leftBackWheel, *rightFrontWheel, *rightBackWheel);
-		gyro = new ADXRS450_Gyro();
-		rotate_controller = new PIDRotate(*m_mecanumDrive, *gyro);
-		gyro_controller = new PIDController(p, i, d, 3, gyro, rotate_controller);
-		SmartDashboard::PutNumber("P", p);
-		SmartDashboard::PutNumber("I", i);
-		SmartDashboard::PutNumber("D", d);
-		SmartDashboard::PutNumber("F", f);
-		gyro_controller->Enable();
-		//gyro_controller->SetContinuous();
-		gyro_controller->SetSetpoint(0.0);
-		gyro_controller->SetAbsoluteTolerance(30);
-		gyro_controller->SetInputRange(-180.0, 180.0);
-		gyro_controller->SetOutputRange(-K, K);
-		frc::SmartDashboard::PutData("Auto Modes", &m_chooser);
+		gyro = new ADXRS450_Gyro(); // Initialize the orientation correcting gyroscope
+		rotate_controller = new PIDRotate(*m_mecanumDrive, *gyro); // Defines an instance the custom PIDOutput class
+		gyro_controller = new PIDController(p, i, d, gyro, rotate_controller); // Initializes the PIDConroller with the gyro as an input
+		// and the rotate mecanum axis as an output
+
+		// Used for tuning on the Smart Dashboard
+		SmartDashboard::PutNumber("P", p); // Tunes p
+		SmartDashboard::PutNumber("I", i); // Tunes i
+		SmartDashboard::PutNumber("D", d); // Tunes d
+		SmartDashboard::PutNumber("F", f); // Tunes f
+
+		// PIDController initalization code.
+		gyro_controller->SetContinuous(); // The PIDController shouldn't stop.
+		gyro_controller->SetSetpoint(setpoint); // Set the angle setpoint to, or straight ahead.
+		gyro_controller->SetInputRange(-180.0, 180.0); // The possible range of angles the gyro can measure.
+		gyro_controller->SetOutputRange(-K, K); // The speed of the rotation to eliminate error.
+		gyro_controller->Enable(); // Start the PIDController loop.
+
+		frc::SmartDashboard::PutData("Auto Modes", &m_chooser); // Default Code
 	}
 
 	/**
@@ -140,30 +151,52 @@ public:
 			m_autonomousCommand->Cancel();
 			m_autonomousCommand = nullptr;
 		}
-		gyro->Calibrate();
-		Wait(5);
+		gyro->Calibrate(); // Calibrates the gyro (VERY IMPORTANT)
+		Wait(5); // Calibrate for 5 seconds to ensure accurate gyro measures.
 	}
 
 	void TeleopPeriodic() override {
 		frc::Scheduler::GetInstance()->Run();
-		double strafe = m_xbox->GetRawAxis(4);
-		double forward = -m_xbox->GetRawAxis(5);
-		double rotate = m_xbox->GetRawAxis(0);
-		//DriverStation::ReportWarning("on target?:" + std::to_string(gyro_controller->OnTarget()));
-		/*if (rotate == 0.0) {
-			double angle =
-			if (angle != 0.0) {
 
-			}
-		}*/
+		double strafe = m_logitech->GetRawAxis(4); // The 4th axis on the controller controls strafing
+		double forward = -m_logitech->GetRawAxis(5); // The 4th axis on the controller controls moving forward and backwards
+		double rotate = m_logitech->GetRawAxis(0); // The 0 axis on the controller controls manual rotation
+
+		if (m_logitech->GetRawButton(2)) {
+			while(m_logitech->GetRawButton(2));
+			gyro_controller->Disable();
+
+			double turningValue = (90.0 - gyro->GetAngle()) * 0.01; // The turning value how fast the robot should be rotated
+			turningValue = std::copysign(turningValue, -1); // Turns in the direction of the PID output
+			m_mecanumDrive->DriveCartesian(0, 0, turningValue); // Final drive code using frc's Mecanum Drive class.
+			gyro->Reset();
+			gyro_controller->Enable();
+
+		}
+
+		if (m_logitech->GetRawButton(1)) {
+			while(m_logitech->GetRawButton(2));
+			double turningValue = (-90.0 - gyro->GetAngle()) * 0.01; // The turning value how fast the robot should be rotated
+			turningValue = std::copysign(turningValue, 1); // Turns in the direction of the PID output
+			m_mecanumDrive->DriveCartesian(0, 0, turningValue); // Final drive code using frc's Mecanum Drive class.
+			while (!(gyro->GetAngle() > 85 && gyro->GetAngle() < 95));
+			gyro->Reset();
+			gyro_controller->Enable();
+
+		}
+
+		// Controls the robot speed. K is the constant of controlling the acceleration.
 		rotate*=K;
 		forward*=K;
 		strafe*=K;
+
+		// Used for tuning
 		gyro_controller->SetP(SmartDashboard::GetNumber("P", p));
 		gyro_controller->SetI(SmartDashboard::GetNumber("I", i));
 		gyro_controller->SetD(SmartDashboard::GetNumber("D", d));
 		gyro_controller->SetF(SmartDashboard::GetNumber("F", f));
-		rotate_controller->DriveCartesian(strafe, forward, rotate);
+
+		rotate_controller->DriveCartesian(strafe, forward, rotate); // Drive function
 	}
 
 	void TestPeriodic() override {}
@@ -172,7 +205,7 @@ private:
 	// Have it null by default so that if testing teleop it
 	// doesn't have undefined behavior and potentially crash.
 	MecanumDrive *m_mecanumDrive;		// RobotDrive object using PWM 1-4 for drive motors
-	Joystick *m_xbox;
+	Joystick *m_logitech;
 	ADXRS450_Gyro *gyro;
 	PIDController *gyro_controller;
 	PIDRotate *rotate_controller;
@@ -180,7 +213,8 @@ private:
 	ExampleCommand m_defaultAuto;
 	MyAutoCommand m_myAuto;
 	frc::SendableChooser<frc::Command*> m_chooser;
-	const double K = 0.4;
+	double setpoint = 0.0;
+	const double K = 0.7;
 	const double p = 1.0;
 	const double i = 0.1;
 	const double d = 0.1;
